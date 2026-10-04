@@ -266,6 +266,65 @@ def test_normalize_empty_window_falls_back():
 
 
 # ----------------------------------------------------------------------
+# band parameters + lab fitting
+# ----------------------------------------------------------------------
+
+def _synthetic_band(depth=0.25, center=3.00, width=0.18, n=6000, noise=0.01,
+                    seed=4):
+    rng = np.random.default_rng(seed)
+    wave = np.linspace(1.9, 4.1, n)
+    refl = 1.0 - depth * np.exp(-0.5 * ((wave - center) / width) ** 2)
+    refl *= 1.0 + 0.05 * (wave - 2.2)          # mild red slope
+    err = np.full(n, noise)
+    return wave, refl + rng.normal(0, noise, n), err
+
+
+def test_band_measure_recovers_synthetic():
+    from spexrock import bands
+    wave, refl, err = _synthetic_band()
+    p = bands.measure(wave, refl, err, n_boot=120)
+    assert abs(p.center_um - 3.00) < 0.03
+    assert not p.center_is_limit
+    assert abs(p.depth_at_minimum - 0.25) < 0.03
+    assert abs(p.r290 - (1 - 0.25 * np.exp(-0.5 * ((2.90 - 3.0) / 0.18) ** 2))) < 0.03
+    assert p.depth_err < 0.02
+    assert np.isfinite(p.area_um) and p.area_um > 0
+
+
+def test_band_center_limit_flag():
+    from spexrock import bands
+    # band centered inside the telluric gap -> accessible minimum at the
+    # blue edge -> center flagged as a limit (sharp-type convention)
+    wave, refl, err = _synthetic_band(center=2.75, width=0.25)
+    p = bands.measure(wave, refl, err, n_boot=60)
+    assert p.center_is_limit
+
+
+def test_labfit_recovers_mixture(tmp_path):
+    from spexrock import labfit
+    grid = np.linspace(2.0, 4.0, 900)
+    em_a = 1.0 - 0.5 * np.exp(-0.5 * ((grid - 2.95) / 0.12) ** 2)   # "serpentine"
+    em_b = np.full_like(grid, 0.6)                                   # "opaque"
+    specs = []
+    for name, refl in (("serp", em_a), ("opaque", em_b)):
+        specs.append(labfit.LabSpectrum("grp", name, name, name,
+                                        tmp_path / f"{name}.csv",
+                                        grid.copy(), refl.copy()))
+    rng = np.random.default_rng(8)
+    truth = 0.7 * em_a + 0.3 * em_b
+    data = truth + rng.normal(0, 0.005, grid.size)
+    err = np.full(grid.size, 0.005)
+    weights, model, chi2 = labfit.fit_combination(grid, data, err, specs,
+                                                  slope_nuisance=False)
+    assert abs(weights[0] - 0.7) < 0.05
+    assert abs(weights[1] - 0.3) < 0.05
+    assert chi2 < 2.0
+    ranked = labfit.search_mixtures(grid, data, err, specs, max_components=2,
+                                    top_n=3)
+    assert len(ranked[0][1]) == 2      # best model uses both endmembers
+
+
+# ----------------------------------------------------------------------
 # CLI
 # ----------------------------------------------------------------------
 

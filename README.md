@@ -55,6 +55,90 @@ asteroid-specific steps:
 
 Stages that already produced their outputs are skipped on rerun (`--fresh`
 overrides), so a tweak to a late stage does not re-extract everything.
+Multi-block extractions also resume at block granularity: frame-number
+segments whose per-frame outputs already exist are skipped.
+
+### Procedural details per stage
+
+**Beam-position probe (before first extraction of a new night).** Nod
+positions along the slit vary night to night, and automatic aperture
+finding fails on faint targets and on junk orders. The documented recipe:
+extract one A−B pair of the *standard* with `load_image` + `make_profiles`,
+read the ± peak positions from the order profiles, and set
+`aperture_find_method="fixed"`, `aperture_find_parameter=[pos_A, pos_B]`,
+`aperture_signs=["+","-"]` in the config. Signs are pinned because noisy
+profiles flip the automatic sign inference on faint targets.
+
+**Bright vs. faint targets (important robustness rule).** For targets
+invisible in a single A−B pair, set `stack_object_images=True`: all
+pair-subtracted frames are median-stacked into one image which is
+extracted once (`reduction_mode='A'` internally) — the approach also used
+by Rivkin et al. (2022) and Arredondo et al. (2024). For targets with a
+visible per-pair trace, leave stacking OFF: a robust median across many
+bright, seeing-variable traces clips the profile core and suppresses flux,
+worst in the thermal-background orders (we measured artificial band
+deepening up to a factor ~2 on bright asteroids). When in doubt, reduce
+both ways and compare.
+
+**LXD saturation knobs.** LXD sky frames commonly saturate the
+longest-wavelength order; set `ignore_wavecal_saturation=True` (the
+wavelength solution proceeds) and `exclude_orders="<N>"` to drop that
+order from extraction. LXD wavelength calibration always needs sky frames
+(the argon lamp has no lines beyond ~4 µm); by default the object frames
+themselves are used (`sky_files=None`).
+
+**File-name quirks.** `object_prefix` / `analog_prefix` override
+`source_prefix` when the observer named object and standard files
+differently; prefixes must include any separator (e.g. `"spc-"`,
+`"objectname."`). Pre-upgrade (pre-2014) data use 4-digit frame numbers
+and `instrument="spex"`.
+
+**Residual water corrections (`spexrock/water.py`).** Beyond standard-star
+division, two residual corrections are available: (1) *airmass
+regression* — Beer–Lambert fit of ln(flux) vs airmass across the night's
+repeated standard visits yields the night's measured optical-depth
+spectrum τ(λ), applied as exp(τ·ΔAM) for the object−standard airmass
+offset (model-free; preferred — in our tests it removes ~18% of
+water-window residuals in a worst-case ΔAM=0.46 pair, vs ~3% for ATRAN
+scaling); (2) *ATRAN power scaling* — division by a model transmission
+T(λ)^x with x fitted on water-dominated windows. Fit residual corrections
+on high-S/N spectra only (the standards), never on a noisy target, where
+exponent fits chase noise.
+
+**Band parameters (`spexrock/bands.py`).** Reported quantities follow the
+3-µm literature: linear continuum from the clean 2.0–2.45 µm windows;
+R(2.90) and R(3.05) continuum-normalized reflectances (Takir & Emery
+2012 convention); band depth over 2.95–3.10 µm and at the smoothed
+minimum; band center from a parabola fit around the minimum — flagged as
+an *upper limit* when the minimum sits at the blue edge of the 2.86 µm
+telluric cutoff (the ground-based signature of sharp-type/phyllosilicate
+bands whose true center lies inside the atmospheric gap); FWHM and
+integrated band area over the accessible window; bootstrap uncertainties
+throughout. Ground-based caveat: the 2.50–2.86 µm region is always masked.
+
+**Compositional fitting (`spexrock/labfit.py`).** Interpretation follows
+standard curve-matching practice (Vernazza et al.; Brunetto et al.;
+Reddy & Sanchez; Rivkin et al.; Fornasier et al.; Takir & Emery 2012,
+Appendix C): select laboratory species plausibly present at the target's
+surface temperature (phyllosilicates, carbonates, sulfates, opaques,
+anhydrous silicates, carbonaceous-chondrite analogs, ammoniated species,
+ices), and fit non-negative linear (areal) combinations of their
+reflectance spectra to the observed spectrum, exhaustively ranking 1–3
+component mixtures by reduced χ². Lab spectra are resampled and smoothed
+to the data's resolution. Stated caveats on every result: linear mixing
+gives areal (not mass) fractions — intimate-mixing/Hapke modeling is out
+of scope; library spectra are room-temperature, while volatile band
+shapes at asteroid temperatures (150–220 K) differ — cryogenic ice
+spectra (SSHADE; Mastrapa et al. optical constants) are the known gap;
+grain size modulates band contrast. The library-building script and index
+format are documented in `data/lab_library/README.md`.
+
+**Archival data.** The IRTF Legacy Archive serves raw FITS at
+`irtfdata.ifa.hawaii.edu/idals/<sem>/data/scrs1/bigdog/<prog>/<yymmdd>/`,
+searchable by object/date at `/search/`; semester schedules
+(`/observing/schedule/cy<sem>_sched.txt`) map any date to program number
+and PI — consult them (and the data's PI) before publishing archival
+reductions.
 
 ## Install
 
@@ -133,6 +217,9 @@ spexrock/
   merging.py    order merging for cross-dispersed modes
   products.py   normalization, thermal correction, FITS/ASCII/CSV writers
   thermal.py    NEATM: subsolar temperature, disk integral, excess removal
+  water.py      residual telluric-water corrections (airmass regression, ATRAN)
+  bands.py      formal 3-um band parameters (continuum, center, depth, width)
+  labfit.py     lab-spectra mixture fitting (NNLS curve matching, RELAB library)
   qa.py         final-spectrum summary plot (pyspextool writes per-stage QA)
   pipeline.py   orchestrator with resume-from-stage
   cli/run.py    spexrock-run
@@ -166,3 +253,5 @@ tests/          test_spexrock.py (fast unit tests + slow end-to-end)
 * Harris, A. W. 1998, Icarus, 131, 291 — NEATM
 * DeMeo, F. E., et al. 2009, Icarus, 202, 160 — 1.2 µm normalization convention
 * [pyspextool](https://github.com/pyspextool/pyspextool) — the reduction engine
+
+*Additional method references:* Vernazza, P., et al. 2015, ApJ 806, 204 & 2017, AJ 153, 72 — compositional curve matching · Reddy, V., & Sanchez, J. A., et al., Asteroids IV spectral-analysis chapter · Fornasier, S., et al. 2014, Icarus 233, 163 · Brunetto, R., et al. — laboratory analog spectra · Smette, A., et al. 2015, A&A 576, A77 (Molecfit) · Ulmer-Moll, S., et al. 2019, A&A 621, A79 (telluric-method comparison)
