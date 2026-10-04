@@ -155,26 +155,48 @@ def fit_combination(grid: np.ndarray, data: np.ndarray, err: np.ndarray,
 
 def search_mixtures(grid: np.ndarray, data: np.ndarray, err: np.ndarray,
                     library: list[LabSpectrum], max_components: int = 3,
-                    top_n: int = 15):
+                    top_n: int = 15, slope_nuisance: bool = True):
     """Exhaustive 1..max_components mixture search, ranked by reduced chi2.
 
     Returns a list of (chi2, [(species, sample_id, fraction), ...], model).
-    The telluric gap is masked automatically.
+    The telluric gap is masked automatically.  Every library spectrum is
+    resampled onto `grid` exactly once.
     """
     gap = (grid > TELLURIC_GAP[0]) & (grid < TELLURIC_GAP[1])
     err = np.where(gap, np.inf, err)
+    columns = np.array([em.resampled(grid) for em in library])   # (nlib, n)
+    good_base = np.isfinite(data) & np.isfinite(err) & (err > 0) & (err < np.inf)
+    lam0 = np.nanmedian(grid[good_base])
     results = []
     for k in range(1, max_components + 1):
         for combo in itertools.combinations(range(len(library)), k):
-            ems = [library[i] for i in combo]
+            A = columns[list(combo)].T
+            good = good_base & np.all(np.isfinite(A), axis=1)
+            if good.sum() < 50:
+                continue
+            if slope_nuisance:
+                base = np.nanmean(A, axis=1)
+                A_fit = np.column_stack([A, base * (grid - lam0),
+                                         -base * (grid - lam0)])
+            else:
+                A_fit = A
             try:
-                weights, model, chi2 = fit_combination(grid, data, err, ems)
+                w, _ = nnls(A_fit[good] / err[good, None], data[good] / err[good])
             except Exception:
                 continue
+            model = A_fit @ w
+            ndof = good.sum() - np.count_nonzero(w)
+            chi2 = float(np.sum(((data[good] - model[good]) / err[good]) ** 2)
+                         / max(ndof, 1))
             if not np.isfinite(chi2):
                 continue
-            parts = [(em.species, em.sample_id, float(frac))
-                     for em, frac in zip(ems, weights) if frac > 0.01]
+            weights = w[:k]
+            total = weights.sum()
+            if total <= 0:
+                continue
+            weights = weights / total
+            parts = [(library[i].species, library[i].sample_id, float(frac))
+                     for i, frac in zip(combo, weights) if frac > 0.01]
             results.append((chi2, parts, model))
     results.sort(key=lambda r: r[0])
     return results[:top_n]
