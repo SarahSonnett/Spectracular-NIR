@@ -248,9 +248,9 @@ def check_brightness_mode(config: ReduceConfig) -> float | None:
     print(f"Object trace significance (first A-B pair): {snr:.0f}")
     if snr > TRACE_SNR_BRIGHT_THRESHOLD and config.stack_object_images:
         print("WARNING: stack_object_images=True on an unambiguously bright "
-              "target -- median stacking clips the trace cores and corrupts "
-              "band depths; use per-pair extraction "
-              "(stack_object_images=false).")
+              "target -- the stack's sigma-clipped combine rejects jittered "
+              "trace cores and corrupts band depths; use per-pair "
+              "extraction (stack_object_images=false).")
     return snr
 
 

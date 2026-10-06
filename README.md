@@ -71,14 +71,19 @@ profiles flip the automatic sign inference on faint targets.
 
 **Bright vs. faint targets (important robustness rule).** For targets
 invisible in a single A−B pair, set `stack_object_images=True`: all
-pair-subtracted frames are median-stacked into one image which is
-extracted once (`reduction_mode='A'` internally) — the approach also used
-by Rivkin et al. (2022) and Arredondo et al. (2024). For targets with a
-visible per-pair trace, leave stacking OFF: a robust median across many
-bright, seeing-variable traces clips the profile core and suppresses flux,
-worst in the thermal-background orders (we measured artificial band
-deepening up to a factor ~2 on bright asteroids). When in doubt, reduce
-both ways and compare.
+pair-subtracted frames are combined into one image (pyspextool's robust
+weighted mean with 8σ clipping — statistically mean-efficient, unlike a
+median) which is extracted once (`reduction_mode='A'` internally) — the
+approach also used by Rivkin et al. (2022) and Arredondo et al. (2024).
+For targets with a visible per-pair trace, leave stacking OFF: on a
+bright, seeing/guiding-jittered trace the frame-to-frame variation at the
+profile-core pixels dwarfs the propagated errors, so the 8σ clip REJECTS
+the frames whose trace is centered on that pixel — clipping the core and
+suppressing flux, worst in the thermal-background orders (we measured
+artificial band-depth changes up to a factor ~2 on bright asteroids).
+Per-pair extraction is immune because each frame is traced at its own
+PSF position, so jitter never becomes a pixel-level outlier. When in
+doubt, reduce both ways and compare.
 
 **LXD saturation knobs.** LXD sky frames commonly saturate the
 longest-wavelength order; set `ignore_wavecal_saturation=True` (the
