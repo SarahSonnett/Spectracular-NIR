@@ -50,6 +50,12 @@ def test_config_json_roundtrip(tmp_path):
     assert isinstance(record["raw_dir"], str)
 
 
+def test_water_correction_knob_validated():
+    ReduceConfig(water_correction="airmass")
+    with pytest.raises(ValueError):
+        ReduceConfig(water_correction="atran-typo")
+
+
 def test_config_validation():
     with pytest.raises(ValueError):
         ReduceConfig(mode="LXD_long")   # mode must be prism|SXD|LXD
@@ -94,6 +100,28 @@ def test_expand_and_pending_numbers(tmp_path):
     (config.proc_dir / f"{prefix}00060.fits").touch()
     assert engine.pending_numbers(config, "20-22,60-61") == "60-61"
     assert engine.pending_numbers(config, "20-22") == ""
+    # classic-spex outputs carry 4-digit frame numbers; resume must see them
+    for n in (70, 71):
+        (config.proc_dir / f"{prefix}{n:04d}.fits").touch()
+    assert engine.pending_numbers(config, "70-71") == ""
+    assert engine.pending_numbers(config, "70-72") == "70-72"
+
+
+def test_trace_snr_one_sided():
+    """A narrow bright trace scores high; noise, and slit-wide sky-residual
+    stripes (the order pattern), must not."""
+    from spexrock import engine
+    rng = np.random.default_rng(4)
+    noise = rng.normal(0, 1.0, (512, 512))
+    assert engine.trace_snr_from_image(noise) < 20
+    # slit-wide stripes (~100 px) mimic sky-residual order structure
+    stripes = noise + 5.0 * np.sin(np.arange(512) / 100.0 * np.pi)[:, None]
+    assert engine.trace_snr_from_image(stripes) < 20
+    # a 4-px-wide +/- beam pair rides on top of the stripes
+    traced = stripes.copy()
+    traced[250:254, :] += 25.0
+    traced[300:304, :] -= 25.0
+    assert engine.trace_snr_from_image(traced) > engine.TRACE_SNR_BRIGHT_THRESHOLD
 
 
 def test_calibration_names():
@@ -193,6 +221,27 @@ def test_remove_excess_eta_fit_recovers():
         eta=1.0, fit_eta=True, r_au=1.1, alpha_deg=30.0)
     residual = np.abs(corrected[wavelengths > 4.0] - 1.0)
     assert np.max(residual) < 0.02
+
+
+def test_remove_excess_eta_fit_band_free():
+    """A broad rounded 3-um band must not bias the eta fit (the anchor
+    continuum is K-band only; an earlier version fit 2.0-3.5 um and
+    over-subtracted on NST-like spectra)."""
+    wavelengths = np.linspace(1.7, 4.1, 600)
+    # sigma chosen so the band has fully recovered by the 3.70-3.80 um
+    # anchor window; a band still open there biases the anchor slightly by
+    # construction (a documented property of the Rivkin anchoring
+    # convention, not of this implementation)
+    band = 0.12 * np.exp(-0.5 * ((wavelengths - 3.1) / 0.18) ** 2)
+    truth = 1.0 - band
+    excess = thermal.thermal_excess(wavelengths, p_v=0.07, g_slope=0.15,
+                                    eta=1.0, r_au=2.96, alpha_deg=10.7)
+    observed = truth + excess
+    corrected, _ = thermal.remove_excess(
+        wavelengths, observed, None, p_v=0.07, g_slope=0.15,
+        eta=1.5, fit_eta=True, r_au=2.96, alpha_deg=10.7)
+    # recovered spectrum must match the banded truth, incl. the band region
+    assert np.max(np.abs(corrected - truth)) < 0.01
 
 
 # ----------------------------------------------------------------------
@@ -322,6 +371,33 @@ def test_labfit_recovers_mixture(tmp_path):
     ranked = labfit.search_mixtures(grid, data, err, specs, max_components=2,
                                     top_n=3)
     assert len(ranked[0][1]) == 2      # best model uses both endmembers
+
+
+def test_labfit_albedo_filter(tmp_path):
+    """Scale-free fits let a bright endmember 'fit' a dark object; the
+    p_v filter must reject albedo-incompatible mixtures and keep
+    endmembers whose coverage cannot be judged."""
+    from spexrock import labfit
+    grid = np.linspace(2.0, 4.0, 400)
+    vis = np.linspace(0.4, 4.0, 1200)
+    shape = 1.0 - 0.3 * np.exp(-0.5 * ((vis - 2.95) / 0.12) ** 2)
+    bright = labfit.LabSpectrum("g", "bright", "b", "b", tmp_path / "b.csv",
+                                vis.copy(), 0.6 * shape)
+    dark = labfit.LabSpectrum("g", "dark", "d", "d", tmp_path / "d.csv",
+                              vis.copy(), 0.05 * shape)
+    nir_only = labfit.LabSpectrum("g", "nironly", "n", "n", tmp_path / "n.csv",
+                                  grid.copy(), 0.6 * shape[-400:])
+    data = np.interp(grid, vis, shape)       # normalized observation
+    err = np.full(grid.size, 0.01)
+    specs = [bright, dark, nir_only]
+    free = labfit.search_mixtures(grid, data, err, specs, max_components=1)
+    assert any("bright" in p[0] for r in free for p in r[1])
+    gated = labfit.search_mixtures(grid, data, err, specs, max_components=1,
+                                   p_v=0.05)
+    names = [p[0] for r in gated for p in r[1]]
+    assert "bright" not in names         # albedo-incompatible, rejected
+    assert "dark" in names               # compatible, kept
+    assert "nironly" in names            # no 0.55-um coverage, kept
 
 
 # ----------------------------------------------------------------------

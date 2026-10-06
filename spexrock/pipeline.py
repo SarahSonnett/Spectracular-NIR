@@ -48,6 +48,8 @@ def run(config: ReduceConfig, resume: bool = True) -> list[Path]:
         if resume and combined.exists():
             _banner(f"{which} already combined; skipping (resume)")
             continue
+        if which == "object":
+            engine.check_brightness_mode(config)
         if which == "object" and config.stack_object_images:
             stack_file = config.proc_dir / (engine.stack_name(config) + ".fits")
             if resume and stack_file.exists():
@@ -85,6 +87,9 @@ def run(config: ReduceConfig, resume: bool = True) -> list[Path]:
     # --- normalization, thermal correction, products ---------------------
     _banner("building final products")
     spectra, info = products.load_spectrum(spectrum_path)
+    if config.water_correction == "airmass":
+        from spexrock import water
+        spectra = water.night_airmass_correction(config, spectra)
     spectra, factor = products.normalize(spectra,
                                          config.normalization_wavelength,
                                          config.normalization_halfwidth_um)

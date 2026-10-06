@@ -198,11 +198,17 @@ def remove_excess(wavelength_um: np.ndarray,
 
     Returns ``(corrected_reflectance, excess)``.  With ``fit_eta`` the
     beaming parameter is adjusted (bounded 0.6-3.0) so that the corrected
-    reflectance beyond 3.5 um is consistent with a linear continuum
-    extrapolated from the 2.0-3.5 um region -- the usual practice when eta
-    is not known from radiometry.  The uncertainty array is unchanged by the
-    subtraction (the model is treated as exact) but is used to weight the
-    eta fit.
+    reflectance in the reddest clean 0.1 um of coverage (3.70-3.80 um when
+    available) matches a linear continuum extrapolated from the K band
+    (2.0-2.45 um) -- the Rivkin et al. (2022) anchoring convention, with
+    the spectrum's own K band in place of external photometry.  The
+    continuum is fit to the K band ONLY: it is both thermal-free and
+    3-um-band-free, so neither the thermal contamination nor the absorption
+    band itself can tilt the anchor.  (An earlier version fit the continuum
+    over 2.0-3.5 um, which includes the band; for broad rounded bands that
+    dragged the continuum down and over-subtracted the thermal flux.)  The
+    uncertainty array is unchanged by the subtraction (the model is treated
+    as exact) but is used to weight the eta fit.
     """
     wavelength_um = np.asarray(wavelength_um, dtype=float)
     reflectance = np.asarray(reflectance, dtype=float)
@@ -214,34 +220,40 @@ def remove_excess(wavelength_um: np.ndarray,
     if fit_eta:
         from scipy.optimize import minimize_scalar
 
-        short = (wavelength_um > 2.0) & (wavelength_um < 3.5)
-        long_ = wavelength_um >= 3.5
-        good = np.isfinite(reflectance)
+        good = np.isfinite(reflectance) & np.isfinite(wavelength_um)
+        kband = good & (wavelength_um >= 2.0) & (wavelength_um <= 2.45)
+        hi = min(3.80, float(np.nanmax(wavelength_um[good])) - 0.02)
+        anchor = good & (wavelength_um > hi - 0.10) & (wavelength_um < hi)
         if uncertainty is not None:
             weight = np.where(np.asarray(uncertainty) > 0,
                               1.0 / np.square(uncertainty), 0.0)
         else:
             weight = np.ones_like(reflectance)
 
-        if np.sum(short & good) > 10 and np.sum(long_ & good) > 10:
+        if kband.sum() > 10 and anchor.sum() > 10:
+            wsum = weight[anchor].sum()
+            if wsum <= 0:
+                weight = np.where(anchor, 1.0, weight)
+                wsum = weight[anchor].sum()
+            anchor_center = hi - 0.05
 
             def cost(eta_value: float) -> float:
-                # Refit the continuum on the *corrected* spectrum each trial,
-                # otherwise the thermal contamination of the 2-3.5 um region
-                # biases the continuum high and the fit under-subtracts.
                 corrected = reflectance - excess_for(eta_value)
-                coeffs = np.polyfit(wavelength_um[short & good],
-                                    corrected[short & good], 1)
-                continuum = np.polyval(coeffs, wavelength_um)
-                resid = corrected - continuum
-                mask = long_ & good
-                return float(np.sum(weight[mask] * resid[mask] ** 2))
+                # Refit the K-band continuum on the corrected spectrum each
+                # trial: for warm objects the K band itself carries thermal
+                # flux.  The fit window stays band-free either way.
+                coeffs = np.polyfit(wavelength_um[kband], corrected[kband], 1,
+                                    w=np.sqrt(weight[kband]))
+                target = float(np.polyval(coeffs, anchor_center))
+                got = float(np.sum(corrected[anchor] * weight[anchor]) / wsum)
+                return (got - target) ** 2
 
             result = minimize_scalar(cost, bounds=(0.6, 3.0), method="bounded")
             eta = float(result.x)
-            print(f"NEATM: fitted beaming parameter eta = {eta:.2f}")
+            print(f"NEATM: fitted beaming parameter eta = {eta:.2f} "
+                  f"(anchor {hi - 0.10:.2f}-{hi:.2f} um)")
         else:
-            print("NEATM: too few points beyond 3.5 um to fit eta; "
+            print("NEATM: too few K-band or anchor-window points to fit eta; "
                   f"using eta = {eta:.2f}")
 
     excess = excess_for(eta)

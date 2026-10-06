@@ -47,6 +47,8 @@ from pathlib import Path
 import numpy as np
 from scipy.optimize import nnls
 
+from spexrock.bands import TELLURIC_ADVISORY
+
 TELLURIC_GAP = (2.50, 2.86)
 
 
@@ -59,6 +61,11 @@ class LabSpectrum:
     file: Path
     wave: np.ndarray
     reflectance: np.ndarray
+
+    def reflectance_at(self, wavelength_um: float, halfwidth_um: float = 0.03) -> float:
+        """Median absolute reflectance in a window; NaN when not covered."""
+        sel = np.abs(self.wave - wavelength_um) <= halfwidth_um
+        return float(np.median(self.reflectance[sel])) if sel.any() else np.nan
 
     def resampled(self, grid: np.ndarray, data_resolution: float = 350.0) -> np.ndarray:
         """Lab reflectance on `grid`, smoothed toward the data resolution."""
@@ -155,15 +162,30 @@ def fit_combination(grid: np.ndarray, data: np.ndarray, err: np.ndarray,
 
 def search_mixtures(grid: np.ndarray, data: np.ndarray, err: np.ndarray,
                     library: list[LabSpectrum], max_components: int = 3,
-                    top_n: int = 15, slope_nuisance: bool = True):
+                    top_n: int = 15, slope_nuisance: bool = True,
+                    p_v: float | None = None,
+                    albedo_tolerance: float = 2.0):
     """Exhaustive 1..max_components mixture search, ranked by reduced chi2.
 
     Returns a list of (chi2, [(species, sample_id, fraction), ...], model).
     The telluric gap is masked automatically.  Every library spectrum is
     resampled onto `grid` exactly once.
+
+    ``p_v`` enables the albedo-compatibility filter: because the fits are
+    scale-free (the data are normalized, the lab spectra absolute), a
+    bright endmember can otherwise "fit" a dark object.  With ``p_v`` set,
+    a mixture is rejected when its areal absolute reflectance at 0.55 um
+    (sum of fraction x endmember reflectance) falls outside
+    [p_v / albedo_tolerance, p_v * albedo_tolerance].  The default factor
+    of 2 reflects how loosely lab powder reflectance tracks geometric
+    albedo (grain size, packing, phase-angle geometry).  Mixtures with any
+    component lacking 0.55-um coverage are kept (cannot be judged).
     """
     gap = (grid > TELLURIC_GAP[0]) & (grid < TELLURIC_GAP[1])
+    for _lo, _hi in TELLURIC_ADVISORY:
+        gap |= (grid > _lo) & (grid < _hi)
     err = np.where(gap, np.inf, err)
+    r055 = np.array([em.reflectance_at(0.55) for em in library])
     columns = np.array([em.resampled(grid) for em in library])   # (nlib, n)
     good_base = np.isfinite(data) & np.isfinite(err) & (err > 0) & (err < np.inf)
     lam0 = np.nanmedian(grid[good_base])
@@ -195,6 +217,12 @@ def search_mixtures(grid: np.ndarray, data: np.ndarray, err: np.ndarray,
             if total <= 0:
                 continue
             weights = weights / total
+            if p_v is not None:
+                mix_r055 = float(np.sum(r055[list(combo)] * weights))
+                if np.isfinite(mix_r055) and not (
+                        p_v / albedo_tolerance <= mix_r055
+                        <= p_v * albedo_tolerance):
+                    continue
             parts = [(library[i].species, library[i].sample_id, float(frac))
                      for i, frac in zip(combo, weights) if frac > 0.01]
             results.append((chi2, parts, model))

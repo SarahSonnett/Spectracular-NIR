@@ -14,6 +14,7 @@ from pathlib import Path
 
 import numpy as np
 
+from spexrock import bands
 from spexrock.config import ReduceConfig
 
 
@@ -40,13 +41,30 @@ def summary_plot(spectra: np.ndarray, config: ReduceConfig,
                 ax.plot(wave[good], excess[good], ls="--", color="C3",
                         lw=0.9, label="NEATM thermal excess" if i == 0 else None)
 
+    # telluric shading: dark = the masked gap, light = advisory zones
+    # (ATRAN transmission < 0.5 at R=350; see bands.TELLURIC_ADVISORY)
+    allw = spectra[:, 0, :][np.isfinite(spectra[:, 0, :])]
+    wlo, whi = float(np.nanmin(allw)), float(np.nanmax(allw))
+    for (zlo, zhi), shade in ([(bands.TELLURIC_GAP, "0.85")]
+                              + [(z, "0.93") for z in bands.TELLURIC_ADVISORY]):
+        if zhi > wlo and zlo < whi:
+            ax.axvspan(max(zlo, wlo), min(zhi, whi), color=shade, zorder=0)
+    ax.set_xlim(wlo - 0.02, whi + 0.02)
+
     ax.axhline(1.0, color="0.7", lw=0.5, zorder=0)
     ax.axvline(config.normalization_wavelength, color="0.7", lw=0.5, zorder=0)
     ax.set_xlabel("Wavelength ($\\mu$m)")
     ax.set_ylabel(f"Reflectance (= 1 at {config.normalization_wavelength:.2f} $\\mu$m)")
     ax.set_title(f"{config.object_name}  /  {config.analog_name}   "
                  f"[{config.instrument} {config.mode}]")
-    finite = spectra[:, 1, :][np.isfinite(spectra[:, 1, :])]
+    # y-range from pixels OUTSIDE the telluric zones, so gap/advisory-zone
+    # spikes on faint targets cannot blow up the scale
+    wall = spectra[:, 0, :].ravel()
+    fall = spectra[:, 1, :].ravel()
+    inzone = np.zeros(wall.shape, dtype=bool)
+    for zlo, zhi in [bands.TELLURIC_GAP] + bands.TELLURIC_ADVISORY:
+        inzone |= (wall > zlo) & (wall < zhi)
+    finite = fall[np.isfinite(fall) & np.isfinite(wall) & ~inzone]
     if finite.size:
         lo, hi = np.nanpercentile(finite, [1, 99])
         ax.set_ylim(max(lo - 0.2, -0.5), hi + 0.2)

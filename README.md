@@ -105,6 +105,15 @@ T(λ)^x with x fitted on water-dominated windows. Fit residual corrections
 on high-S/N spectra only (the standards), never on a noisy target, where
 exponent fits chase noise.
 
+The airmass regression is integrated into the pipeline via the config
+knob `water_correction` (`"none"` default, or `"airmass"`): after order
+merging and before normalization, τ(λ) is regressed from the night's
+individually extracted standard frames (read back from `proc/` with
+their header airmasses) and applied at ΔAM = ⟨AM_object⟩ − ⟨AM_analog⟩.
+The step requires ≥ 3 standard frames spanning ≥ 0.05 in airmass and
+skips itself with a console note otherwise, so enabling it is always
+safe. Final products record the knob in `config_used.json` as usual.
+
 **Band parameters (`spexrock/bands.py`).** Reported quantities follow the
 3-µm literature: linear continuum from the clean 2.0–2.45 µm windows;
 R(2.90) and R(3.05) continuum-normalized reflectances (Takir & Emery

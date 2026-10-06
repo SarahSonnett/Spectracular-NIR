@@ -113,6 +113,14 @@ class ReduceConfig:
     normalization_wavelength_um: float | None = None  # None = mode default
     normalization_halfwidth_um: float = 0.05
     airmass_warn_threshold: float = 0.15
+    # Residual telluric-water correction applied to the merged reflectance:
+    # 'none', or 'airmass' = empirical Beer-Lambert tau(lambda) regressed
+    # from the night's standard visits, applied at the object-minus-standard
+    # airmass offset (the method that won the comparison in the
+    # water-removal investigation; it is fit on the high-S/N standards, so
+    # it is safe at any target S/N).  Needs >= 3 standard visits spanning
+    # >= 0.05 airmass, otherwise it is skipped with a console note.
+    water_correction: str = "none"
 
     # --- merging (cross-dispersed modes only) ---------------------------
     merge_orders: bool = True
@@ -145,6 +153,9 @@ class ReduceConfig:
                 f"got {self.mode!r}")
         if self.instrument not in ("uspex", "spex"):
             raise ValueError(f"instrument must be 'uspex' or 'spex', got {self.instrument!r}")
+        if self.water_correction not in ("none", "airmass"):
+            raise ValueError("water_correction must be 'none' or 'airmass', "
+                             f"got {self.water_correction!r}")
 
     # --- derived --------------------------------------------------------
     @property

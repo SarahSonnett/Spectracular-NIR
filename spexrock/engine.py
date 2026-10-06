@@ -24,6 +24,9 @@ pyspextool: https://github.com/pyspextool/pyspextool
 from __future__ import annotations
 
 import os
+from pathlib import Path
+
+import numpy as np
 
 from spexrock.config import ReduceConfig
 
@@ -154,6 +157,103 @@ def combine_object_images(config: ReduceConfig) -> str:
     return stack_name(config)
 
 
+def trace_snr_from_image(image: np.ndarray, nstrip: int = 32,
+                         highpass: int = 31) -> float:
+    """Strip-wise significance of narrow beam structure in a pair-subtracted
+    image.
+
+    The image is split into ``nstrip`` dispersion strips (short enough that
+    order curvature is negligible); each strip is median-collapsed into a
+    spatial profile and HIGH-PASSED with a running median of ``highpass``
+    pixels, which removes slit-wide sky-residual order stripes while
+    keeping the few-pixel-wide +/- beam peaks.  The returned value is the
+    median peak significance over the stronger half of the strips.
+
+    Calibration on real SpeX LXD nights (both detector eras): unambiguously
+    bright targets score ~100-1400; faint targets and SOME bright nights
+    both score ~15-50.  The metric is therefore ONE-SIDED: a high value
+    proves a bright, per-pair-extractable trace, but a low value proves
+    nothing (bright targets can score low through guiding smear and
+    era-dependent frame structure).
+    """
+    sigs = []
+    width = image.shape[1]
+    edges = np.linspace(0, width, nstrip + 1, dtype=int)
+    for a, b in zip(edges[:-1], edges[1:]):
+        profile = np.nanmedian(image[:, a:b], axis=1)
+        good = np.isfinite(profile)
+        if good.sum() < 3 * highpass:
+            continue
+        profile = profile[good]
+        padded = np.pad(profile, highpass // 2, mode="reflect")
+        running = np.array([np.median(padded[i:i + highpass])
+                            for i in range(profile.size)])
+        resid = profile - running
+        mad = np.median(np.abs(resid - np.median(resid))) * 1.4826
+        if mad > 0:
+            sigs.append(float(np.max(np.abs(resid)) / mad))
+    if not sigs:
+        return 0.0
+    ordered = np.sort(sigs)
+    return float(np.median(ordered[len(ordered) // 2:]))
+
+
+def _raw_frame_path(config: ReduceConfig, prefix: str, n: int) -> Path | None:
+    for pattern in (f"{prefix}{n:05d}*.fits*", f"{prefix}{n:04d}*.fits*"):
+        hits = sorted(config.raw_dir.glob(pattern))
+        if hits:
+            return hits[0]
+    return None
+
+
+def object_trace_snr(config: ReduceConfig) -> float | None:
+    """Trace significance of the first object A-B pair (None if unreadable)."""
+    from astropy.io import fits
+
+    numbers = expand_numbers(config.object_files)[:2]
+    if len(numbers) < 2:
+        return None
+    paths = [_raw_frame_path(config, config.object_file_prefix, n)
+             for n in numbers]
+    if any(p is None for p in paths):
+        return None
+    frames = []
+    for p in paths:
+        with fits.open(p) as hdul:
+            frames.append(np.asarray(hdul[0].data, dtype=float))
+    if frames[0].shape != frames[1].shape:
+        return None
+    return trace_snr_from_image(frames[0] - frames[1])
+
+
+# Above this, the per-pair trace is unambiguously detectable: every faint
+# night measured scores below ~30, every score above ~100 was a bright
+# target.  One-sided by design -- see trace_snr_from_image.
+TRACE_SNR_BRIGHT_THRESHOLD = 60.0
+
+
+def check_brightness_mode(config: ReduceConfig) -> float | None:
+    """Warn when stacking is enabled on an unambiguously bright target.
+
+    Median image stacking clips the trace cores of bright targets and
+    corrupts band depths (measured: up to 2x band deepening/suppression),
+    and it does so SILENTLY -- hence this gate.  The reverse mistake
+    (per-pair on a faint target) fails loudly at extraction, and the metric
+    cannot prove faintness anyway, so no warning is issued in that
+    direction.  Advisory only: the config stays authoritative.
+    """
+    snr = object_trace_snr(config)
+    if snr is None:
+        return None
+    print(f"Object trace significance (first A-B pair): {snr:.0f}")
+    if snr > TRACE_SNR_BRIGHT_THRESHOLD and config.stack_object_images:
+        print("WARNING: stack_object_images=True on an unambiguously bright "
+              "target -- median stacking clips the trace cores and corrupts "
+              "band depths; use per-pair extraction "
+              "(stack_object_images=false).")
+    return snr
+
+
 def expand_numbers(numbers: str) -> list[int]:
     """Expand a pyspextool index string ('20-29,60,62-64') to frame numbers."""
     out: list[int] = []
@@ -177,7 +277,10 @@ def pending_numbers(config: ReduceConfig, numbers: str) -> str:
     prefix = output_prefix(config)
     remaining = []
     for part in numbers.split(","):
-        done = all((config.proc_dir / f"{prefix}{n:05d}.fits").exists()
+        # pyspextool keeps the raw file's digit count: uspex writes 5-digit
+        # frame numbers, classic spex 4-digit -- accept either
+        done = all(any((config.proc_dir / f"{prefix}{n:0{d}d}.fits").exists()
+                       for d in (5, 4))
                    for n in expand_numbers(part))
         if not done:
             remaining.append(part)

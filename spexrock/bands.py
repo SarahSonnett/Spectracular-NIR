@@ -33,6 +33,14 @@ from dataclasses import dataclass, asdict
 import numpy as np
 
 TELLURIC_GAP = (2.50, 2.86)
+# Additional severely absorbed regions: band-averaged ATRAN transmission
+# < 0.5 at R = 350 (Mauna Kea model shipped with pyspextool).  Standard-star
+# division is unreliable inside them; they are shaded in figures and masked
+# in the band metrics and lab-library fits (like TELLURIC_GAP).  They match
+# the regions published analyses avoid: the 1.9-um H2O band (not shown in
+# Takir & Emery 2012 or Rivkin 2022 figures), the 3.2-3.3-um CH4+H2O
+# complex (Rivkin 2022's "artifacts near 3.2 um"), and the CO2 edge.
+TELLURIC_ADVISORY = [(1.82, 1.94), (3.20, 3.33), (4.11, 4.19)]
 CONTINUUM_WINDOWS = [(2.00, 2.45)]
 BAND_SEARCH = (2.86, 3.35)
 DEPTH_WINDOW = (2.95, 3.10)
@@ -118,6 +126,12 @@ def measure(wave: np.ndarray, reflectance: np.ndarray, error: np.ndarray,
     good = (np.isfinite(wave) & np.isfinite(reflectance) & (error > 0)
             & ~((wave > TELLURIC_GAP[0]) & (wave < TELLURIC_GAP[1]))
             & (np.abs(reflectance) < 20))
+    # the advisory zones (CH4 complex etc.) are excluded from all metrics
+    # too: band-center/FWHM/area searches run over BAND_SEARCH, which
+    # overlaps the 3.20-3.33 um zone where telluric artifacts can mimic or
+    # distort band structure (Rivkin 2022's Lacadeira/Gyptis cases)
+    for _lo, _hi in TELLURIC_ADVISORY:
+        good &= ~((wave > _lo) & (wave < _hi))
     c, m, s = _bin(wave[good], reflectance[good], error[good])
     base = _single_measure(c, m, s)
     boots = []

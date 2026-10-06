@@ -99,6 +99,70 @@ def apply_airmass_correction(wave: np.ndarray, reflectance: np.ndarray,
     return reflectance * factor
 
 
+def night_airmass_correction(config, spectra: np.ndarray) -> np.ndarray:
+    """Apply the empirical airmass-regression water correction to a merged
+    reflectance ``spectra`` array (pyspextool layout: order x plane x pixel).
+
+    tau(lambda) is regressed from the night's individually extracted
+    standard-star frames (read back from the proc directory with their
+    header airmasses) and applied at dam = <AM_object> - <AM_analog>.
+    Returns the corrected array; when the night cannot support the
+    regression (< 3 analog visits, or airmass span < 0.05) the input is
+    returned unchanged with a console note.
+    """
+    from astropy.io import fits
+
+    from spexrock import engine
+
+    def per_frame(numbers: str):
+        prefix = engine.output_prefix(config)
+        out = []
+        for n in engine.expand_numbers(numbers):
+            for d in (5, 4):
+                path = config.proc_dir / f"{prefix}{n:0{d}d}.fits"
+                if path.exists():
+                    with fits.open(path) as hdul:
+                        data = np.asarray(hdul[0].data, dtype=float)
+                        am = float(hdul[0].header["AM"])
+                    wave = data[..., 0, :].ravel()
+                    flux = data[..., 1, :].ravel()
+                    good = np.isfinite(wave) & np.isfinite(flux)
+                    order = np.argsort(wave[good])
+                    out.append((wave[good][order], flux[good][order], am))
+                    break
+        return out
+
+    visits = per_frame(config.analog_files)
+    ams = np.array([am for _, _, am in visits])
+    if len(visits) < 3 or (len(visits) and np.ptp(ams) < 0.05):
+        print("water_correction=airmass: night cannot support the "
+              f"regression ({len(visits)} analog frames, airmass span "
+              f"{np.ptp(ams) if len(visits) else 0:.3f}); skipping.")
+        return spectra
+
+    object_ams = [am for _, _, am in per_frame(config.object_files)]
+    if not object_ams:
+        print("water_correction=airmass: no per-frame object spectra found; "
+              "skipping.")
+        return spectra
+    dam = float(np.mean(object_ams) - np.mean(ams))
+
+    grid = np.geomspace(min(v[0].min() for v in visits),
+                        max(v[0].max() for v in visits), 4000)
+    tau = airmass_regression(visits, grid)
+    print(f"water_correction=airmass: tau from {len(visits)} analog frames "
+          f"(AM {ams.min():.2f}-{ams.max():.2f}), dam = {dam:+.3f}")
+
+    corrected = np.array(spectra, dtype=float, copy=True)
+    for i in range(corrected.shape[0]):
+        wave, refl = corrected[i, 0, :], corrected[i, 1, :]
+        good = np.isfinite(wave) & np.isfinite(refl)
+        if good.any():
+            corrected[i, 1, good] = apply_airmass_correction(
+                wave[good], refl[good], grid, tau, dam)
+    return corrected
+
+
 def load_atran(resolution: int = 2000) -> tuple[np.ndarray, np.ndarray]:
     """Load a shipped pyspextool ATRAN transmission model (wave_um, T)."""
     from astropy.io import fits
