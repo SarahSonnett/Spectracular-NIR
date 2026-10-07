@@ -343,7 +343,13 @@ def extract_set(config: ReduceConfig, which: str) -> str:
                        exclude_orders=config.exclude_orders,
                        bg_annulus=list(config.bg_annulus_arcsec),
                        fix_badpixels=config.fix_badpixels,
-                       psf_radius=config.psf_radius_arcsec,
+                       # object: psf_radius enables profile-weighted
+                       # (optimal) extraction; analog: separately
+                       # configured, default sum (bright-source profile
+                       # systematics corrupt optimal weights)
+                       psf_radius=(config.psf_radius_arcsec
+                                   if which == "object"
+                                   else config.analog_psf_radius_arcsec),
                        # bias-drift correction is a uSpeX (H2RG) detector
                        # option; pre-upgrade spex has no equivalent knob
                        detector_info=({"correct_bias": config.correct_bias}

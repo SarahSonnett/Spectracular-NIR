@@ -121,6 +121,14 @@ class ReduceConfig:
     # it is safe at any target S/N).  Needs >= 3 standard visits spanning
     # >= 0.05 airmass, otherwise it is skipped with a console note.
     water_correction: str = "none"
+    # Extraction weighting for the ANALOG. The analog is bright, so its
+    # noise budget is dominated by profile systematics, not photons --
+    # the regime where optimal extraction's assumptions fail (we measured
+    # order-envelope-shaped reflectance corruption when analogs were
+    # optimally extracted). Default None = sum extraction for the analog
+    # regardless of psf_radius_arcsec, which then applies to the object
+    # only.
+    analog_psf_radius_arcsec: float | None = None
 
     # --- merging (cross-dispersed modes only) ---------------------------
     merge_orders: bool = True

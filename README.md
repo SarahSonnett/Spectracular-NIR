@@ -1,4 +1,11 @@
-# SpexRock
+# Spectracular-NIR
+
+*Formerly **SpexRock**. Part of the Spectracular family of small-body
+reflectance pipelines — Spectracular-NIR (this repo, IRTF/SpeX
+near-infrared) and Spectracular-VIS (LCO/FLOYDS visible, formerly
+SpecReflect) — named with room for other wavelength ranges later. The
+Python package keeps the import name ``spexrock`` so existing scripts
+and configs keep working.*
 
 **Asteroid reflectance spectra from NASA IRTF SpeX, end to end.**
 
@@ -139,17 +146,36 @@ Per-pair extraction is immune because each frame is traced at its own
 PSF position, so jitter never becomes a pixel-level outlier. When in
 doubt, reduce both ways and compare.
 
-**Optimal extraction for faint targets (photon economics).** Sum
-extraction (the default) adds every pixel in the aperture with equal
-weight, so sky-dominated edge pixels dilute the S/N. Setting
-`psf_radius_arcsec` (e.g. 2.0) switches to profile-weighted "optimal"
-extraction (Horne 1986), which weights pixels by the measured spatial
-profile. On our faintest archival stacked target this raised the
-continuum and band-region S/N by ~40% — equivalent to doubling the
-integration time — while leaving the measured band depth and shape class
-unchanged. Recommended whenever the target, not the sky, is the limiting
-noise source; the default stays sum so that existing snapshotted configs
-reproduce exactly.
+**Optimal extraction: faint stacked objects only (photon economics with
+a measured boundary).** Sum extraction (the default) adds every pixel in
+the aperture with equal weight, so sky-dominated edge pixels dilute the
+S/N. Setting `psf_radius_arcsec` (e.g. 2.0) switches the OBJECT to
+profile-weighted "optimal" extraction (Horne 1986), which weights pixels
+by the measured spatial profile. On our faintest archival stacked target
+this raised the continuum and band-region S/N by ~40% — equivalent to
+doubling the integration time — while leaving the measured band depth
+and shape class unchanged.
+
+The boundary matters as much as the gain. Optimal extraction's
+assumptions hold only where photon noise dominates; on bright sources
+the noise budget is profile systematics, and the weights then DISTORT
+flux rather than optimize it. We measured this directly: optimally
+extracting the (always-bright) analogs produced order-envelope-shaped
+corruption of the reflectance, and optimally extracting a bright
+per-pair object corrupted its band depth by several sigma even with the
+analog correctly sum-extracted. A second boundary emerged
+on adoption: even for stacked objects, optimal extraction destabilized
+band depths on SHALLOW stacks (two nights with 16–20 combined pairs
+shifted by 2.5–3σ), while deep stacks (≥ ~50 pairs) reproduced the sum
+result exactly with the full S/N gain — a shallow stack's spatial
+profile is too noisy to weight by. Policy, enforced by the code and the
+configs: the analog is always sum-extracted (`analog_psf_radius_arcsec`,
+default None, exists for experiments only); `psf_radius_arcsec` is set
+only for faint objects with DEEP stacks, and only after the result is
+verified stable against a sum reduction of the same night (the
+before/after comparison is part of the adoption record). Bright
+per-pair objects and shallow stacks use sum extraction; at their S/N
+the photon argument is marginal and the accuracy risk is not.
 
 The pipeline's brightness gate backs this rule up automatically: it
 measures the narrow-trace significance of the first raw A−B pair
@@ -297,7 +323,7 @@ comments):
 | `sky_files` | LXD only: sky frames for the long orders (default: the object frames themselves, standard IRTF practice) |
 | `analog_sptype/bmag/vmag` | optional; set all three to skip the SIMBAD query |
 | `normalization_wavelength_um` | default 1.20 (prism/SXD) or 3.55 (LXD) |
-| `psf_radius_arcsec` | set (e.g. 2.0) to switch from sum to optimal extraction — ~40% S/N gain measured on a faint stacked target |
+| `psf_radius_arcsec` | set (e.g. 2.0) for optimal extraction of the OBJECT — faint stacked targets only (~40% S/N gain measured); analogs always sum-extract |
 | `water_correction` | `"none"` or `"airmass"` (the night's own τ(λ) from repeated analog visits) |
 | `neatm_*` | thermal-excess removal; needs `p_v`, `r_au`, `alpha_deg`; `neatm_fit_eta` anchors η to the K-band continuum |
 
