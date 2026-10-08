@@ -4,18 +4,19 @@
 reflectance pipelines — Spectracular-NIR (this repo, IRTF/SpeX
 near-infrared) and Spectracular-VIS (LCO/FLOYDS visible, formerly
 SpecReflect) — named with room for other wavelength ranges later. The
-Python package keeps the import name ``spexrock`` so existing scripts
-and configs keep working.*
+Python package keeps the import name ``spexrock`` (and the ``spexrock-run``
+command) so existing scripts and configs keep working; everywhere else this
+document uses the current name.*
 
 **Asteroid reflectance spectra from NASA IRTF SpeX, end to end.**
 
-SpexRock reduces raw SpeX frames — prism, SXD, or LXD mode, pre- or
+Spectracular-NIR reduces raw SpeX frames — prism, SXD, or LXD mode, pre- or
 post-upgrade instrument — to a normalized asteroid reflectance spectrum in
 one command. It is a thin, batch-friendly pipeline built on
 [pyspextool](https://github.com/pyspextool/pyspextool), the official Python
 implementation of the Spextool reduction protocols (Cushing, Vacca & Rayner
 2004), so every instrumental step follows the community-standard procedures
-maintained by the instrument team. SpexRock adds the asteroid-specific
+maintained by the instrument team. Spectracular-NIR adds the asteroid-specific
 layer that Spextool leaves to the user:
 
 * **Solar-analog telluric correction** — the object/analog ratio
@@ -274,7 +275,7 @@ reductions.
 ## Install
 
 ```bash
-cd SpexRock
+cd Spectracular-NIR
 python3.11 -m venv .venv
 .venv/bin/pip install -e .
 ```
