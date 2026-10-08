@@ -3,9 +3,9 @@ requires = ["setuptools>=61"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "spexrock"
+name = "spectracular-nir"
 version = "0.1.0"
-description = "Asteroid reflectance pipeline for NASA IRTF SpeX, built on pyspextool (Cushing et al. 2004 protocols)"
+description = "Spectracular-NIR: asteroid reflectance pipeline for NASA IRTF SpeX, built on pyspextool (Cushing et al. 2004 protocols)"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "BSD-3-Clause" }
