@@ -9,7 +9,7 @@ description = "Spectracular-NIR: asteroid reflectance pipeline for NASA IRTF Spe
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "BSD-3-Clause" }
-authors = [{ name = "Stephanie Sonnett" }]
+authors = [{ name = "Sarah Sonnett" }]
 dependencies = [
     "pyspextool",
     "numpy",
